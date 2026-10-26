@@ -13,6 +13,7 @@ with open(config_file, "r") as f:
     config = yaml.safe_load(f)
 
 config["img_path"] = str(config_file.parent / "projections")
+config["channel_order"] = "WH"
 
 with open(config_file, "w") as f:
     yaml.safe_dump(config, f)

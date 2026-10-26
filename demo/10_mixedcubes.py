@@ -13,6 +13,7 @@ geometry = nect.Geometry.from_yaml(demo_dir / "geometry.yaml")
 reconstruction_path, _ = nect.reconstruct(
     geometry=geometry,
     projections=demo_dir / "projections",
+    channel_order="WH",
     quality="high",
     mode="dynamic",
     exp_name="mixedcubes",
