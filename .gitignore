@@ -39,3 +39,5 @@ dataset/
 /sizediff
 results/
 output/
+outputs/
+experiment_logs/

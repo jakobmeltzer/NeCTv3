@@ -389,7 +389,23 @@ class BaseTrainer:
             self.evaluate()
 
         if self.downsample_detector_factor != 1:
-            self.proj = F.avg_pool2d(self.proj.unsqueeze(0), kernel_size=self.downsample_detector_factor, stride=self.downsample_detector_factor,).squeeze(0)
+            if self.proj.dim() == 3:
+                self.proj = F.avg_pool2d(
+                    self.proj.unsqueeze(0),
+                    kernel_size=self.downsample_detector_factor,
+                    stride=self.downsample_detector_factor,
+                ).squeeze(0)
+            elif self.proj.dim() == 4:
+                self.proj = F.avg_pool2d(
+                    self.proj,
+                    kernel_size=self.downsample_detector_factor,
+                    stride=self.downsample_detector_factor,
+                )
+            else:
+                raise ValueError(
+                    f"Expected projection tensor with 3 or 4 dimensions, "
+                    f"got shape {tuple(self.proj.shape)}"
+                )
         
         self.proj = self.proj.flatten()
         self.current_angle = self.current_angle + 1

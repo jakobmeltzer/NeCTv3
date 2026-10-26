@@ -179,10 +179,9 @@ echo
 # Disable immediate exit so we can record metadata even if Python fails.
 set +e
 
-python "$PYTHON_SCRIPT" 2>&1 | tee "$RUN_LOG"
+python -u "$PYTHON_SCRIPT" > "$RUN_LOG" 2>&1
 
-# PIPESTATUS[0] is Python's exit code rather than tee's.
-PYTHON_EXIT_CODE=${PIPESTATUS[0]}
+PYTHON_EXIT_CODE=$?
 
 set -e
 
@@ -191,7 +190,22 @@ set -e
 # ------------------------------------------------------------
 
 cleanup
-trap - EXIT INT TERM
+on_exit() {
+    local status=$?
+
+    trap - EXIT INT TERM
+
+    cleanup
+
+    {
+        echo "Launcher exited: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "Launcher exit status: $status"
+    } >> "$METADATA"
+}
+
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ------------------------------------------------------------
 # Final metadata
