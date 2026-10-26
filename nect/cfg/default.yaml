@@ -40,6 +40,8 @@ points_per_ray:
   linear: True                     # (bool) Linear increase instead of doubling
 
 add_poisson: False                 # (bool) Add Poisson noise to the simulated projections during training
+use_extended_forward_model: False # (bool) False: y=integral(mu ds); True: y=integral(mu ds)-beta*d^2
+beta_initial: 0.0                  # (float) Initial beta in y = integral(mu ds) - beta*d^2; beta is learned
 points_per_batch: auto             # (int > 0 | 'auto') Number of points per batch. Often the highest number of points that can fit in memory will give the best results. Auto tries to fit up to 5 000 000 points per batch
 
 geometry: null

@@ -114,6 +114,12 @@ class BaseTrainer:
         self.fabric.launch()
         warnings.resetwarnings()
         self.model = config.get_model()
+        if config.use_extended_forward_model:
+            # Keep beta on the model so model.parameters(), Fabric/DDP, and model
+            # checkpoints all handle it in exactly the same way as network weights.
+            self.model.beta = torch.nn.Parameter(
+                torch.tensor(float(config.beta_initial), dtype=torch.float32)
+            )
         self.optim = config.get_optimizer(self.model)
         (self.lr_scheduler_warmup, self.lr_scheduler, self.lr_scheduler_warmup_downsample,) = config.get_lr_schedulers(self.optim)
         self.current_epoch = 0
@@ -225,6 +231,31 @@ class BaseTrainer:
     
     def get_model(self):
         return self.model
+
+    def apply_forward_model(
+        self,
+        attenuation: torch.Tensor,
+        distances: torch.Tensor,
+        accumulation_steps: int = 1,
+    ) -> torch.Tensor:
+        """Map sampled attenuation to a log projection.
+
+        ``distances / max_distance_traveled`` is the same normalized d used by
+        the original forward model.  When ``use_extended_forward_model`` is
+        true, the learned model is
+
+            y = d * sum(mu_i) - beta * d**2.
+
+        When it is false, this reduces to the original ``d * sum(mu_i)``.
+
+        ``accumulation_steps`` averages complete sub-angle projections for
+        continuous scanning.
+        """
+        d = distances / self.geometry.max_distance_traveled
+        projection = torch.sum(attenuation, dim=1) * d
+        if self.config.use_extended_forward_model:
+            projection = projection - self.model.beta * d.square()
+        return projection / accumulation_steps
     
     def set_model(self, newmodel):
         self.model = newmodel
@@ -638,7 +669,7 @@ class BaseTrainer:
                         processed_tensor = torch.zeros((points_shape[0], points_shape[1], 1), dtype=torch.float32, device=self.fabric.device,).view(-1, 1)
                         processed_tensor[~zero_points_mask] = atten_hat
                         atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
-                        y_pred = torch.sum(atten_hat, dim=1) * (self.projector.distances / (self.geometry.max_distance_traveled))  # * (self.ct_sampler.distance_between_points / self.geometry.max_distance_traveled)
+                        y_pred = self.apply_forward_model(atten_hat, self.projector.distances)
                         if self.config.add_poisson:
                             y_pred = (y_pred + torch.poisson(y_pred * 1e5) / 1e5) / 2
 
@@ -686,6 +717,11 @@ class BaseTrainer:
                                 "downsample_detector_factor": self.downsample_detector_factor,
                                 "points_per_ray": self.points_per_ray,
                                 "distance_between_points": self.projector.distance_between_points,
+                                **(
+                                    {"beta": self.model.beta.detach()}
+                                    if self.config.use_extended_forward_model
+                                    else {}
+                                ),
                                 "lr": self.optim.param_groups[0]["lr"],
                                 "num_proj_processed": self.current_projection,
                             },
@@ -951,9 +987,7 @@ class BaseTrainer:
             processed[~zero_points_mask] = atten_hat
             atten_hat = processed.view(points_shape[0], points_shape[1])
 
-            y_pred = torch.sum(atten_hat, dim=1) * (
-                self.projector.distances / (self.geometry.max_distance_traveled)
-            )
+            y_pred = self.apply_forward_model(atten_hat, self.projector.distances)
             loss = self.loss_fn(y_pred, y, 0)
 
             self.fabric.backward(loss)

@@ -376,6 +376,8 @@ class Config:
     accumulation_steps: int | None = None
     continous_scanning: bool = False
     num_workers: int = 0
+    use_extended_forward_model: bool = False
+    beta_initial: float = 0.0
 
     @property
     def mode(self) -> str:
@@ -1176,6 +1178,8 @@ def cfg_sanity_check(cfg: dict):
         "sample_outside": (int, [(int.__ge__, 0, gt_eq)]),
         "accumulation_steps": (Optional[int], [(int.__ge__, 1, gt_eq)]),
         "continous_scanning": (bool, []),
+        "use_extended_forward_model": (bool, []),
+        "beta_initial": (float, []),
         "num_workers": (int, [(int.__ge__, 0, gt_eq)]),}
     
     model = cfg.get("model")

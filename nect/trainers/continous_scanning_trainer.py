@@ -193,7 +193,9 @@ class ContinousScanningTrainer(BaseTrainer):
                             processed_tensor = torch.zeros((points_shape[0], points_shape[1], 1), dtype=torch.float32, device=self.fabric.device,).view(-1, 1)
                             processed_tensor[~zero_points_mask] = atten_hat
                             atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
-                            contrib = torch.sum(atten_hat, dim=1) * (distances / self.geometry.max_distance_traveled) / self.config.accumulation_steps
+                            contrib = self.apply_forward_model(
+                                atten_hat, distances, self.config.accumulation_steps
+                            )
                             if y_pred is None:
                                 y_pred = contrib
                                 y_target = y / self.config.accumulation_steps
@@ -240,7 +242,9 @@ class ContinousScanningTrainer(BaseTrainer):
                         processed_tensor = torch.zeros((points_shape[0], points_shape[1], 1), dtype=torch.float32, device=self.fabric.device,).view(-1, 1)
                         processed_tensor[~zero_points_mask] = atten_hat
                         atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
-                        contrib = torch.sum(atten_hat, dim=1) * (distances / self.geometry.max_distance_traveled) / self.config.accumulation_steps
+                        contrib = self.apply_forward_model(
+                            atten_hat, distances, self.config.accumulation_steps
+                        )
                         self.fabric.backward((contrib * grad_y_pred).sum())
 
                     self.fabric.log_dict(
@@ -252,6 +256,11 @@ class ContinousScanningTrainer(BaseTrainer):
                             "downsample_detector_factor": self.downsample_detector_factor,
                             "points_per_ray": self.points_per_ray,
                             "distance_between_points": self.projector.distance_between_points,
+                            **(
+                                {"beta": self.model.beta.detach()}
+                                if self.config.use_extended_forward_model
+                                else {}
+                            ),
                             "lr": self.optim.param_groups[0]["lr"],
                             "num_proj_processed": self.current_projection,
                         },
