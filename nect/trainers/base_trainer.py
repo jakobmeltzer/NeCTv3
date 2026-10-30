@@ -25,6 +25,7 @@ import tinycudann as tcnn
 
 import nect
 from nect.data import NeCTDataset
+from nect.forward_model import log_projection
 from nect.network import KPlanes
 from nect.network.kplanes import regularize_k_planes
 from nect.utils import create_sub_folders, setup_logger, total_variation_3d, prune_model
@@ -114,12 +115,6 @@ class BaseTrainer:
         self.fabric.launch()
         warnings.resetwarnings()
         self.model = config.get_model()
-        if config.use_extended_forward_model:
-            # Keep beta on the model so model.parameters(), Fabric/DDP, and model
-            # checkpoints all handle it in exactly the same way as network weights.
-            self.model.beta = torch.nn.Parameter(
-                torch.tensor(float(config.beta_initial), dtype=torch.float32)
-            )
         self.optim = config.get_optimizer(self.model)
         (self.lr_scheduler_warmup, self.lr_scheduler, self.lr_scheduler_warmup_downsample,) = config.get_lr_schedulers(self.optim)
         self.current_epoch = 0
@@ -236,25 +231,27 @@ class BaseTrainer:
         self,
         attenuation: torch.Tensor,
         distances: torch.Tensor,
+        ray_lengths: torch.Tensor | None = None,
         accumulation_steps: int = 1,
     ) -> torch.Tensor:
         """Map sampled attenuation to a log projection.
 
-        ``distances / max_distance_traveled`` is the same normalized d used by
-        the original forward model.  When ``use_extended_forward_model`` is
-        true, the learned model is
+        ``distances`` is the integration step length (delta s), while
+        ``ray_lengths`` is the total clipped ray length L. Both are normalized
+        by ``max_distance_traveled``. When the extension is enabled:
 
-            y = d * sum(mu_i) - beta * d**2.
-
-        When it is false, this reduces to the original ``d * sum(mu_i)``.
+            y = delta_s * sum(mu_i) - beta * L**2.
 
         ``accumulation_steps`` averages complete sub-angle projections for
         continuous scanning.
         """
-        d = distances / self.geometry.max_distance_traveled
-        projection = torch.sum(attenuation, dim=1) * d
-        if self.config.use_extended_forward_model:
-            projection = projection - self.model.beta * d.square()
+        projection = log_projection(
+            attenuation,
+            distances,
+            self.geometry.max_distance_traveled,
+            beta=self.model.beta if self.config.use_extended_forward_model else None,
+            ray_lengths=ray_lengths,
+        )
         return projection / accumulation_steps
     
     def set_model(self, newmodel):
@@ -685,7 +682,11 @@ class BaseTrainer:
                         processed_tensor = torch.zeros((points_shape[0], points_shape[1], 1), dtype=torch.float32, device=self.fabric.device,).view(-1, 1)
                         processed_tensor[~zero_points_mask] = atten_hat
                         atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
-                        y_pred = self.apply_forward_model(atten_hat, self.projector.distances)
+                        y_pred = self.apply_forward_model(
+                            atten_hat,
+                            self.projector.distances,
+                            self.projector.ray_lengths,
+                        )
                         if self.config.add_poisson:
                             y_pred = (y_pred + torch.poisson(y_pred * 1e5) / 1e5) / 2
 
@@ -1003,7 +1004,11 @@ class BaseTrainer:
             processed[~zero_points_mask] = atten_hat
             atten_hat = processed.view(points_shape[0], points_shape[1])
 
-            y_pred = self.apply_forward_model(atten_hat, self.projector.distances)
+            y_pred = self.apply_forward_model(
+                atten_hat,
+                self.projector.distances,
+                self.projector.ray_lengths,
+            )
             loss = self.loss_fn(y_pred, y, 0)
 
             self.fabric.backward(loss)

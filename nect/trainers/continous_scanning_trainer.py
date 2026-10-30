@@ -162,7 +162,7 @@ class ContinousScanningTrainer(BaseTrainer):
                     # compares quantities computed at the same set of ray geometries.
                     y_pred = None
                     y_target = None
-                    cached_angles = []  # list of (points_filtered, zero_points_mask, points_shape, distances)
+                    cached_angles = []  # list of (points_filtered, zero_points_mask, points_shape, distances, ray lengths)
                     with torch.no_grad():
                         for ang in linspace:
                             self.projector.update_angle(ang)
@@ -181,7 +181,8 @@ class ContinousScanningTrainer(BaseTrainer):
                                 cached_angles.append(None)
                                 continue
                             distances = self.projector.distances
-                            cached_angles.append((points_filtered, zero_points_mask, points_shape, distances))
+                            ray_lengths = self.projector.ray_lengths
+                            cached_angles.append((points_filtered, zero_points_mask, points_shape, distances, ray_lengths))
                             atten_hats = []
                             for points_num in range(0, points_filtered.size(0), points_per_batch):
                                 if self.config.mode == "dynamic":
@@ -194,7 +195,10 @@ class ContinousScanningTrainer(BaseTrainer):
                             processed_tensor[~zero_points_mask] = atten_hat
                             atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
                             contrib = self.apply_forward_model(
-                                atten_hat, distances, self.config.accumulation_steps
+                                atten_hat,
+                                distances,
+                                ray_lengths,
+                                self.config.accumulation_steps,
                             )
                             if y_pred is None:
                                 y_pred = contrib
@@ -230,7 +234,7 @@ class ContinousScanningTrainer(BaseTrainer):
                     for cached in cached_angles:
                         if cached is None:
                             continue
-                        points_filtered, zero_points_mask, points_shape, distances = cached
+                        points_filtered, zero_points_mask, points_shape, distances, ray_lengths = cached
                         atten_hats = []
                         for points_num in range(0, points_filtered.size(0), points_per_batch):
                             if self.config.mode == "dynamic":
@@ -243,7 +247,10 @@ class ContinousScanningTrainer(BaseTrainer):
                         processed_tensor[~zero_points_mask] = atten_hat
                         atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
                         contrib = self.apply_forward_model(
-                            atten_hat, distances, self.config.accumulation_steps
+                            atten_hat,
+                            distances,
+                            ray_lengths,
+                            self.config.accumulation_steps,
                         )
                         self.fabric.backward((contrib * grad_y_pred).sum())
 

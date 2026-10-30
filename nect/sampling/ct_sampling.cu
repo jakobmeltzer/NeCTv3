@@ -394,6 +394,7 @@ __device__ void calc_all_points(Point3D start,
                                 torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> ray_points,
                                 torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> random_numbers,
                                 torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> distances,
+                                torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> ray_lengths,
                                 int tid,
                                 int num_points_per_ray,
                                 float max_ray_distance_per_point,
@@ -401,6 +402,9 @@ __device__ void calc_all_points(Point3D start,
                                 const BaseGeometryCylindrical& geometry) {
     Point3D step = {end.x - start.x, end.y - start.y, end.z - start.z};
     float ray_distance = sqrt(step.x * step.x + step.y * step.y + step.z * step.z);
+    // Cylindrical start/end are the radial cylinder intersections. The later
+    // top/bottom point rejection does not shorten this geometric chord.
+    ray_lengths[tid] = ray_distance;
     
     if (uniform_ray_spacing) {
         distances[tid] = max_ray_distance_per_point;
@@ -477,6 +481,7 @@ __device__ void calc_all_points(Point3D start,
                                 torch::PackedTensorAccessor32<float, 3, torch::RestrictPtrTraits> ray_points,
                                 torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> random_numbers,
                                 torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> distances,
+                                torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> ray_lengths,
                                 int tid,
                                 int num_points_per_ray,
                                 float max_ray_distance_per_point,
@@ -485,6 +490,9 @@ __device__ void calc_all_points(Point3D start,
     
     Point3D step = {end.x - start.x, end.y - start.y, end.z - start.z};
     float ray_distance = sqrt(step.x * step.x + step.y * step.y + step.z * step.z);
+    // Voxel start/end have already been clipped to the voxel bounding box by
+    // calc_start_end_points().
+    ray_lengths[tid] = ray_distance;
     if (uniform_ray_spacing) {
         distances[tid] = max_ray_distance_per_point;
         step.x = (step.x / ray_distance) * max_ray_distance_per_point / std::get<2>(geometry.sVoxel);
@@ -581,6 +589,7 @@ __global__ void sample_points(torch::PackedTensorAccessor32<float, 3, torch::Res
                               torch::PackedTensorAccessor32<int64_t, 1, torch::RestrictPtrTraits> random_ray_index,
                               torch::PackedTensorAccessor32<float, 2, torch::RestrictPtrTraits> random_offset,
                               torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> distances,
+                              torch::PackedTensorAccessor32<float, 1, torch::RestrictPtrTraits> ray_lengths,
                               const T geometry,
                               float angle_rad, 
                               int num_points_per_ray,
@@ -598,13 +607,13 @@ __global__ void sample_points(torch::PackedTensorAccessor32<float, 3, torch::Res
     if(!calc_start_end_points(geometry, random_offset, ray_index, tid, angle_rad, start, end)){
         return;
     } 
-    calc_all_points(start, end, ray_points, random_numbers, distances, tid, num_points_per_ray, max_ray_distance_per_point, uniform_ray_spacing, geometry);
+    calc_all_points(start, end, ray_points, random_numbers, distances, ray_lengths, tid, num_points_per_ray, max_ray_distance_per_point, uniform_ray_spacing, geometry);
 }
 
 
 
 template <typename T>
-std::tuple<torch::Tensor, torch::Tensor> sample(const torch::Tensor& random_ray_index,
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> sample(const torch::Tensor& random_ray_index,
                      const T& geometry,
                      float angle_rad,
                      int num_points_per_ray,
@@ -621,6 +630,7 @@ std::tuple<torch::Tensor, torch::Tensor> sample(const torch::Tensor& random_ray_
     // torch::Tensor random_offset = (torch::rand({num_rays, 2}, options) - 0.5) / 2;
     torch::Tensor random_offset = (torch::rand({num_rays, 2}, options) - 0.5) * random_detector_offset;
     torch::Tensor distances = torch::zeros({num_rays}, options);
+    torch::Tensor ray_lengths = torch::zeros({num_rays}, options);
     int threads_per_block = 256;
     int blocks_per_grid = (num_rays + threads_per_block - 1) / threads_per_block;
     // printf("Type geometry: %s\n", typeid(geometry).name());
@@ -629,6 +639,7 @@ std::tuple<torch::Tensor, torch::Tensor> sample(const torch::Tensor& random_ray_
                                                           random_ray_index.packed_accessor32<int64_t, 1, torch::RestrictPtrTraits>(),
                                                           random_offset.packed_accessor32<float, 2, torch::RestrictPtrTraits>(),
                                                           distances.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
+                                                          ray_lengths.packed_accessor32<float, 1, torch::RestrictPtrTraits>(),
                                                           geometry,
                                                           angle_rad,
                                                           num_points_per_ray,
@@ -643,7 +654,7 @@ std::tuple<torch::Tensor, torch::Tensor> sample(const torch::Tensor& random_ray_
         throw std::runtime_error(cudaGetErrorString(error));
     }
     
-    return {points, distances};
+    return {points, distances, ray_lengths};
 
 }   
 

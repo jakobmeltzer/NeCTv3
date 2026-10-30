@@ -110,7 +110,7 @@ class Projector:
                 batch_size = self.random_indexes.size(0) % batch_size
             else:
                 return None, None
-        ray_points, distances = nect.sampling.ct_sampling.sample(
+        ray_points, distances, ray_lengths = nect.sampling.ct_sampling.sample(
             random_ray_index=self.random_indexes,
             geometry=self.c_geometry,
             angle_rad=self.angle,
@@ -124,6 +124,10 @@ class Projector:
             device=self.device.index,
         )
         self.distances = distances
+        # Total CUDA start-to-end ray length. For voxel geometry this is clipped
+        # to the voxel box; for cylindrical geometry it is the radial chord.
+        # This is distinct from ``distances``, the integration step (delta s).
+        self.ray_lengths = ray_lengths
         ray_points.clamp_(min=0, max=1)
         return (
             ray_points,

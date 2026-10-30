@@ -649,6 +649,15 @@ class Config:
             
         else:
             raise ValueError(f"Model type {model} is not supported")
+
+        # Register the optional forward-model parameter at model construction
+        # time so training, checkpoint resume, and all exporters instantiate
+        # exactly the same state_dict structure.
+        if self.use_extended_forward_model:
+            model.beta = torch.nn.Parameter(
+                torch.tensor(float(self.beta_initial), dtype=torch.float32)
+            )
+
         # compute size of model
         # number of elements in the model
         memory_per_point *= 1.5  # buffer

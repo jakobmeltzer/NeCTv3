@@ -73,6 +73,7 @@ class ContinousScanningTrainerMem(ContinousScanningTrainer):
                             continue
 
                         distances = self.projector.distances
+                        ray_lengths = self.projector.ray_lengths
                         atten_hats = []
                         for points_num in range(0, points_filtered.size(0), points_per_batch):
                             if self.config.mode == "dynamic":
@@ -85,7 +86,10 @@ class ContinousScanningTrainerMem(ContinousScanningTrainer):
                         processed_tensor[~zero_points_mask] = atten_hat
                         atten_hat = processed_tensor.view(points_shape[0], points_shape[1])
                         contrib = self.apply_forward_model(
-                            atten_hat, distances, self.config.accumulation_steps
+                            atten_hat,
+                            distances,
+                            ray_lengths,
+                            self.config.accumulation_steps,
                         )
 
                         if y_pred is None:

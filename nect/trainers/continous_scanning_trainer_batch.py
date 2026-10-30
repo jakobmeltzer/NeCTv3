@@ -66,8 +66,7 @@ class ContinousScanningTrainerBatch(ContinousScanningTrainer):
                     ts = float(timestep)
 
                     # Phase 1: accumulate y_pred and y_target without computation graphs.
-                    # Cache (points_filtered, zero_points_mask, points_shape, distances) for Phase 2.
-                    # Distances are cloned because projector.distances is mutated each update_angle().
+                    # Cache (points_filtered, zero_points_mask, points_shape, distances, ray lengths) for Phase 2.
                     collected = []
                     y_pred = None
                     y_target = None
@@ -89,7 +88,8 @@ class ContinousScanningTrainerBatch(ContinousScanningTrainer):
                                 collected.append(None)
                                 continue
                             distances = self.projector.distances.clone()
-                            collected.append((points_filtered, zero_points_mask, points_shape, distances))
+                            ray_lengths = self.projector.ray_lengths.clone()
+                            collected.append((points_filtered, zero_points_mask, points_shape, distances, ray_lengths))
 
                             atten_hats = []
                             for p0 in range(0, points_filtered.size(0), points_per_batch):
@@ -104,7 +104,10 @@ class ContinousScanningTrainerBatch(ContinousScanningTrainer):
                             processed_tensor[~zero_points_mask] = atten_hat
                             atten_hat_grid = processed_tensor.view(points_shape[0], points_shape[1])
                             contrib = self.apply_forward_model(
-                                atten_hat_grid, distances, self.config.accumulation_steps
+                                atten_hat_grid,
+                                distances,
+                                ray_lengths,
+                                self.config.accumulation_steps,
                             )
 
                             if y_pred is None:
@@ -141,7 +144,7 @@ class ContinousScanningTrainerBatch(ContinousScanningTrainer):
                     for cached in collected:
                         if cached is None:
                             continue
-                        points_filtered, zero_points_mask, points_shape, distances = cached
+                        points_filtered, zero_points_mask, points_shape, distances, ray_lengths = cached
                         atten_hats = []
                         for p0 in range(0, points_filtered.size(0), points_per_batch):
                             chunk = points_filtered[p0:p0 + points_per_batch]
@@ -155,7 +158,10 @@ class ContinousScanningTrainerBatch(ContinousScanningTrainer):
                         processed_tensor[~zero_points_mask] = atten_hat
                         atten_hat_grid = processed_tensor.view(points_shape[0], points_shape[1])
                         contrib = self.apply_forward_model(
-                            atten_hat_grid, distances, self.config.accumulation_steps
+                            atten_hat_grid,
+                            distances,
+                            ray_lengths,
+                            self.config.accumulation_steps,
                         )
 
                         self.fabric.backward((contrib * grad_y_pred).sum())
