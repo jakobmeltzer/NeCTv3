@@ -654,8 +654,13 @@ class Config:
         # time so training, checkpoint resume, and all exporters instantiate
         # exactly the same state_dict structure.
         if self.use_extended_forward_model:
+            model_device = next(model.parameters()).device
             model.beta = torch.nn.Parameter(
-                torch.tensor(float(self.beta_initial), dtype=torch.float32)
+                torch.tensor(
+                    float(self.beta_initial),
+                    dtype=torch.float32,
+                    device=model_device,
+                )
             )
 
         # compute size of model

@@ -110,7 +110,7 @@ class Projector:
                 batch_size = self.random_indexes.size(0) % batch_size
             else:
                 return None, None
-        ray_points, distances, ray_lengths = nect.sampling.ct_sampling.sample(
+        sampled_ray_data = nect.sampling.ct_sampling.sample(
             random_ray_index=self.random_indexes,
             geometry=self.c_geometry,
             angle_rad=self.angle,
@@ -123,6 +123,13 @@ class Projector:
             random_detector_offset=self.random_offset_detector,
             device=self.device.index,
         )
+        if len(sampled_ray_data) != 3:
+            raise RuntimeError(
+                "The loaded nect.sampling.ct_sampling CUDA extension is out of date: "
+                f"expected 3 outputs (points, integration steps, ray lengths), got {len(sampled_ray_data)}. "
+                "Rebuild the extension after updating ct_sampling.cu."
+            )
+        ray_points, distances, ray_lengths = sampled_ray_data
         self.distances = distances
         # Total CUDA start-to-end ray length. For voxel geometry this is clipped
         # to the voxel box; for cylindrical geometry it is the radial chord.
