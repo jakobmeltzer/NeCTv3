@@ -1,4 +1,3 @@
-
 #!/bin/bash
 #SBATCH --job-name=nect-cube-phantom
 #SBATCH --partition=GPUQ
