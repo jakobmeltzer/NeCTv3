@@ -31,6 +31,7 @@ python experiments/attenuation_validation/run_experiment.py --stage phantom
 python experiments/attenuation_validation/run_experiment.py --stage projections
 python experiments/attenuation_validation/run_experiment.py --stage reconstruct
 python experiments/attenuation_validation/run_experiment.py --stage evaluate
+python experiments/attenuation_validation/run_experiment.py --stage diagnose-export
 ```
 
 Useful options:
@@ -41,6 +42,23 @@ python experiments/attenuation_validation/run_experiment.py --output-dir /path/o
 ```
 
 `--force` regenerates lightweight phantom/projection inputs but deliberately does not delete checkpoints. Use a new output directory for a genuinely independent reconstruction.
+
+## Diagnose center-grid versus exporter sampling
+
+After Stage 1 has completed on IDUN, run the checkpoint-only diagnostic:
+
+```bash
+python experiments/attenuation_validation/run_experiment.py --stage diagnose-export
+```
+
+This stage never launches or resumes reconstruction. It fails clearly if the completion marker or checkpoint is missing. It evaluates the same saved network on both `(i+0.5)/N` voxel-center coordinates and `i/(N-1)` endpoint-inclusive coordinates, then invokes the unchanged original exporter from the same checkpoint. This guarantees that all three volumes use the current checkpoint. To reuse an existing exporter TIFF instead, use:
+
+```bash
+python experiments/attenuation_validation/run_experiment.py \
+  --stage diagnose-export --reuse-export
+```
+
+Results are written to `export_diagnostic/` beneath the existing Stage 1 output directory. `metrics.json` reports properly resampled ground-truth metrics, coordinate positions and spacing, direct endpoint-versus-export differences, and the residual after reproducing the exporter's legacy scaling formula. Figures and all intermediate volumes are retained so the coordinate and exporter effects can be inspected independently.
 
 The optional `run_idun.slurm` is an example only; its account, partition, modules and environment activation must be adapted to the local IDUN setup.
 

@@ -35,13 +35,30 @@ def _load_model(model_dir: Path):
     return model, device, cfg, geometry
 
 
-def _evaluate_raw_volume(model, device, shape: tuple[int, int, int]) -> np.ndarray:
+def _normalized_axes(
+    shape: tuple[int, int, int], convention: str, device
+):
     import torch
 
-    axes = [
-        torch.linspace(0.5 / n, 1.0 - 0.5 / n, steps=n, device=device)
-        for n in shape
-    ]
+    if convention == "voxel_centers":
+        return [
+            torch.linspace(0.5 / n, 1.0 - 0.5 / n, steps=n, device=device)
+            for n in shape
+        ]
+    if convention == "endpoints":
+        return [torch.linspace(0.0, 1.0, steps=n, device=device) for n in shape]
+    raise ValueError(f"Unknown coordinate convention: {convention!r}")
+
+
+def _evaluate_raw_volume(
+    model,
+    device,
+    shape: tuple[int, int, int],
+    convention: str = "voxel_centers",
+) -> np.ndarray:
+    import torch
+
+    axes = _normalized_axes(shape, convention, device)
     output = np.empty(shape, dtype=np.float32)
     with torch.no_grad():
         for z_index, z_value in enumerate(axes[0]):

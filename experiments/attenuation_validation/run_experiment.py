@@ -21,7 +21,7 @@ from experiments.attenuation_validation.phantom import generate_phantom, load_ph
 from experiments.attenuation_validation.projections import generate_projections  # noqa: E402
 
 
-STAGES = ("phantom", "projections", "reconstruct", "evaluate")
+STAGES = ("phantom", "projections", "reconstruct", "evaluate", "diagnose-export")
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,11 +47,54 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Regenerate completed lightweight stages. Does not delete a reconstruction checkpoint.",
     )
+    parser.add_argument(
+        "--reuse-export",
+        action="store_true",
+        help="With --stage diagnose-export, reuse an existing TIFF instead of rerunning the original exporter.",
+    )
     return parser.parse_args()
 
 
 def selected_stages(stage: str) -> tuple[str, ...]:
-    return STAGES if stage == "all" else (stage,)
+    # Diagnostics are intentionally opt-in: `all` retains the original experiment
+    # workflow and never adds another checkpoint evaluation unexpectedly.
+    return STAGES[:-1] if stage == "all" else (stage,)
+
+
+def run_export_diagnostic_only(args: argparse.Namespace, output_dir: Path) -> int:
+    """Run a checkpoint-only diagnostic with no reconstruction fallback."""
+    completed_path = output_dir / "reconstruction" / "completed_run.json"
+    if not completed_path.exists():
+        raise SystemExit(
+            "Export diagnostic will not launch reconstruction. Missing completion marker: "
+            f"{completed_path}"
+        )
+    completed = read_json(completed_path)
+    run_dir = Path(completed["run_directory"])
+    model_dir = Path(completed.get("model_directory", run_dir / "model"))
+    checkpoint = model_dir / "checkpoints" / "last.ckpt"
+    if not checkpoint.exists():
+        raise SystemExit(
+            "Export diagnostic will not launch reconstruction. Missing checkpoint: "
+            f"{checkpoint}"
+        )
+    from experiments.attenuation_validation.export_diagnostic import diagnose_export
+
+    print(f"Experiment output: {output_dir}", flush=True)
+    print(f"[diagnose-export] Using existing checkpoint: {checkpoint}", flush=True)
+    metrics = diagnose_export(
+        output_dir, model_dir, refresh_export=not args.reuse_export
+    )
+    comparisons = metrics["comparisons"]
+    residual = comparisons["B_legacy_formula_vs_C_exporter"]
+    print(
+        "[diagnose-export] endpoint legacy formula vs exporter: "
+        f"MAE={residual['mean_absolute_mm_inv']:.6g}, "
+        f"max={residual['maximum_absolute_mm_inv']:.6g} mm^-1",
+        flush=True,
+    )
+    print(f"Results: {output_dir / 'export_diagnostic'}", flush=True)
+    return 0
 
 
 def main() -> int:
@@ -60,6 +103,9 @@ def main() -> int:
         raise SystemExit("--epochs and --num-angles must be positive")
 
     output_dir = args.output_dir.resolve()
+    if args.stage == "diagnose-export":
+        return run_export_diagnostic_only(args, output_dir)
+
     output_dir.mkdir(parents=True, exist_ok=True)
     config_path = output_dir / "experiment_config.json"
     requested_config = experiment_config(args.num_angles, args.epochs)
