@@ -143,7 +143,7 @@ def _plot_results(
     plt.close(fig)
 
 
-def _plot_loss(output_dir: Path, model_dir: Path) -> dict:
+def _plot_loss(output_dir: Path, model_dir: Path, figures_dir: Path | None = None) -> dict:
     epochs, losses, seconds = _read_losses(model_dir)
     info = {"logged_epochs": int(len(epochs))}
     if len(epochs) == 0:
@@ -155,12 +155,14 @@ def _plot_loss(output_dir: Path, model_dir: Path) -> dict:
             "elapsed_seconds_at_final_log": float(seconds[-1]),
         }
     )
+    figures_dir = output_dir / "figures" if figures_dir is None else figures_dir
+    figures_dir.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(7, 4.5))
     ax.semilogy(epochs, losses, marker="o", markersize=3)
     ax.set(xlabel="Epoch", ylabel="Mean training loss", title="Legacy NeCT convergence")
     ax.grid(alpha=0.25)
     fig.tight_layout()
-    fig.savefig(output_dir / "figures" / "training_loss.png", dpi=200)
+    fig.savefig(figures_dir / "training_loss.png", dpi=200)
     plt.close(fig)
     return info
 

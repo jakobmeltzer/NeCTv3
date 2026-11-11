@@ -18,6 +18,18 @@ def _write_completion(
     checkpoint = model_dir / "checkpoints" / "last.ckpt"
     if not checkpoint.exists():
         raise RuntimeError(f"Final checkpoint is missing: {checkpoint}")
+    import torch
+
+    try:
+        checkpoint_state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    except TypeError:
+        checkpoint_state = torch.load(checkpoint, map_location="cpu")
+    checkpoint_epoch = int(checkpoint_state.get("epoch", -1))
+    if checkpoint_epoch < int(epochs):
+        raise RuntimeError(
+            f"Checkpoint is incomplete (saved epoch {checkpoint_epoch}, expected at least {epochs}); "
+            "not writing a completion marker. Rerun to resume it."
+        )
     write_json(
         output_dir / "reconstruction" / "completed_run.json",
         {
@@ -27,6 +39,7 @@ def _write_completion(
             "projection_input_kind": "single_npy_file",
             "legacy_file_normalization_expected": True,
             "epochs": int(epochs),
+            "checkpoint_epoch": checkpoint_epoch,
             "seed": seed,
         },
     )
@@ -71,24 +84,26 @@ def run_legacy_reconstruction(
         radians=True,
     )
 
+    reconstruction_cfg = config.get("legacy_reconstruction", {})
+    points_per_ray = int(reconstruction_cfg.get("points_per_ray", 96))
     config_override = {
         "epochs": int(epochs),
         "loss": "L2",
-        "batch_per_proj": 1,
-        "points_per_batch": 1_000_000,
+        "batch_per_proj": reconstruction_cfg.get("batch_per_proj", 1),
+        "points_per_batch": int(reconstruction_cfg.get("points_per_batch", 1_000_000)),
         "downsampling_detector": {
             "start": 1,
             "end": 1,
             "update_interval": 1000,
         },
         "points_per_ray": {
-            "start": 96,
-            "end": 96,
+            "start": points_per_ray,
+            "end": points_per_ray,
             "update_interval": 1000,
             "linear": True,
         },
         "image_interval": -1,
-        "checkpoint_interval": -1,
+        "checkpoint_interval": float(reconstruction_cfg.get("checkpoint_interval_seconds", -1)),
         "checkpoint_epoch": 5,
         "add_poisson": False,
         "s3im": False,

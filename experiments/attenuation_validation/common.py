@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import random
+import subprocess
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,36 @@ def write_json(path: Path, value: Any) -> None:
 
 def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def collect_provenance(repository_root: Path) -> dict[str, Any]:
+    """Collect lightweight reproducibility metadata without importing CUDA packages."""
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=repository_root,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+        )
+    except (OSError, subprocess.CalledProcessError):
+        commit, dirty = "unknown", None
+    versions = {}
+    for package in ["numpy", "scipy", "porespy", "tigre", "torch", "nect"]:
+        try:
+            versions[package] = metadata.version(package)
+        except metadata.PackageNotFoundError:
+            versions[package] = "not-installed-or-not-packaged"
+    return {"git_commit": commit, "git_worktree_dirty": dirty, "packages": versions}
 
 
 def experiment_config(num_angles: int = 180, epochs: int = 20) -> dict[str, Any]:

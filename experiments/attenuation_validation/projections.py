@@ -47,13 +47,30 @@ def _make_tigre_geometry(config: dict):
 
 
 def generate_projections(volume: np.ndarray, config: dict, output_dir: Path) -> np.ndarray:
+    projections, angles = project_with_tigre(volume, config)
+
+    projection_dir = output_dir / "projections"
+    projection_dir.mkdir(parents=True, exist_ok=True)
+    np.save(projection_dir / "projections_physical.npy", projections)
+    np.save(projection_dir / "angles_rad.npy", angles)
+    validate_projections(projections, config, output_dir)
+    return projections
+
+
+def project_with_tigre(
+    volume: np.ndarray, config: dict, angles: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run the shared independent TIGRE forward projector in N,H,W order."""
     try:
         import tigre
     except ImportError as exc:
         raise RuntimeError("PyTigre is not installed; projection generation must run on IDUN.") from exc
 
     geo = _make_tigre_geometry(config)
-    angles = make_angles(config)
+    if angles is None:
+        angles = make_angles(config)
+    else:
+        angles = np.asarray(angles, dtype=np.float32)
     projections = tigre.Ax(volume.astype(np.float32, copy=False), geo, angles)
     projections = np.asarray(projections, dtype=np.float32)
 
@@ -64,12 +81,7 @@ def generate_projections(volume: np.ndarray, config: dict, output_dir: Path) -> 
             "Check TIGRE detector ordering before reconstruction."
         )
 
-    projection_dir = output_dir / "projections"
-    projection_dir.mkdir(parents=True, exist_ok=True)
-    np.save(projection_dir / "projections_physical.npy", projections)
-    np.save(projection_dir / "angles_rad.npy", angles)
-    validate_projections(projections, config, output_dir)
-    return projections
+    return projections, angles
 
 
 def validate_projections(projections: np.ndarray, config: dict, output_dir: Path) -> dict:
