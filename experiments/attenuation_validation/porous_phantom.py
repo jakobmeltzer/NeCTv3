@@ -20,10 +20,17 @@ def generate_porous_phantom(config: dict, output_dir: Path) -> tuple[np.ndarray,
     seed = int(config["seed"])
     generator = ps.generators.blobs
     parameters = inspect.signature(generator).parameters
+    blobiness = spec["blobiness"]
+    # Older NeCT/PoreSpy code commonly used ``[1]``. Current PoreSpy forwards
+    # sequences to scipy.ndimage.gaussian_filter, where a sequence must have one
+    # value per spatial axis. A length-one value is semantically isotropic, so
+    # pass it as a scalar for compatibility across PoreSpy versions.
+    if isinstance(blobiness, (list, tuple, np.ndarray)) and len(blobiness) == 1:
+        blobiness = blobiness[0]
     kwargs = {
         "shape": shape,
         "porosity": float(spec["target_porosity"]),
-        "blobiness": spec["blobiness"],
+        "blobiness": blobiness,
     }
     if "divs" in parameters:
         kwargs["divs"] = int(spec["divs"])
@@ -55,6 +62,8 @@ def generate_porous_phantom(config: dict, output_dir: Path) -> tuple[np.ndarray,
             "voxel_size_zyx_mm": spec["voxel_size_zyx_mm"],
             "generator": "porespy.generators.blobs",
             "generator_parameters": kwargs,
+            "configured_blobiness": spec["blobiness"],
+            "effective_blobiness": blobiness,
             "seed": seed,
             "seed_passed_through_porespy_api": seeded_through_api,
             "target_porosity": spec["target_porosity"],
