@@ -23,7 +23,7 @@ from experiments.attenuation_validation.porous_phantom import (  # noqa: E402
 from experiments.attenuation_validation.porous_projections import generate_porous_projections  # noqa: E402
 
 
-STAGES = ("phantom", "projections", "reconstruct", "evaluate")
+STAGES = ("phantom", "projections", "reconstruct", "evaluate", "reevaluate-coordinates")
 
 
 def parse_args() -> argparse.Namespace:
@@ -184,6 +184,41 @@ def main() -> int:
             print(
                 f"[evaluate] rock mean={metrics['rock']['reconstructed_mean_mm_inv']:.6g}, "
                 f"pore mean={metrics['pore']['reconstructed_mean_mm_inv']:.6g} mm^-1",
+                flush=True,
+            )
+
+    if "reevaluate-coordinates" in stages:
+        completed = _validate_completed_reconstruction(output_dir, config)
+        if completed is None:
+            raise SystemExit("Coordinate reevaluation will not reconstruct: completion marker is missing.")
+        _, model_dir = completed
+        corrected_dir = output_dir / "evaluation_coordinate_corrected"
+        corrected_marker = corrected_dir / "completed.json"
+        if corrected_marker.exists() and not args.force:
+            print("[reevaluate-coordinates] Reusing corrected evaluation.", flush=True)
+        else:
+            from experiments.attenuation_validation.porous_evaluation import evaluate_porous
+
+            print("[reevaluate-coordinates] Mapping TIGRE world points through Rz(pi) into the existing NeCT model.", flush=True)
+            metrics = evaluate_porous(output_dir, model_dir, correct_coordinate_frame=True)
+            write_json(
+                corrected_marker,
+                {
+                    "model_directory": str(model_dir),
+                    "metrics_file": str(corrected_dir / "metrics.json"),
+                    "coordinate_mapping": "rotate_z_180",
+                    "voxelwise_pearson_correlation": metrics["voxelwise_pearson_correlation"],
+                    "rock_mean_mm_inv": metrics["rock"]["reconstructed_mean_mm_inv"],
+                    "pore_mean_mm_inv": metrics["pore"]["reconstructed_mean_mm_inv"],
+                },
+            )
+            print(
+                "[reevaluate-coordinates] "
+                f"correlation={metrics['voxelwise_pearson_correlation']:.6g}, "
+                f"rock mean={metrics['rock']['reconstructed_mean_mm_inv']:.6g}, "
+                f"pore mean={metrics['pore']['reconstructed_mean_mm_inv']:.6g}, "
+                f"global MAE={metrics['global']['mae_mm_inv']:.6g}, "
+                f"global RMSE={metrics['global']['rmse_mm_inv']:.6g} mm^-1",
                 flush=True,
             )
     print("Stage 2 selected stages completed successfully.", flush=True)

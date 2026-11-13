@@ -12,6 +12,10 @@ import numpy as np
 from scipy import ndimage
 
 from .common import read_json, write_json
+from .coordinates import (
+    TIGRE_WORLD_TO_NECT_MODEL,
+    nect_model_volume_to_tigre_world,
+)
 from .evaluation import _evaluate_raw_volume, _load_model, _plot_loss
 from .export_diagnostic import _projection_scaling
 
@@ -214,7 +218,12 @@ def _visualize_3d(evaluation_dir: Path, rock: np.ndarray, reconstruction: np.nda
     return {"threshold_mm_inv": threshold, "ground_truth_ply_points": gt_points, "reconstruction_ply_points": rec_points, "display_binning": 2}
 
 
-def evaluate_porous(output_dir: Path, model_dir: Path) -> dict:
+def evaluate_porous(
+    output_dir: Path,
+    model_dir: Path,
+    *,
+    correct_coordinate_frame: bool = False,
+) -> dict:
     gt = np.load(output_dir / "ground_truth" / "phantom_mu_mm_inv.npy")
     rock = np.load(output_dir / "ground_truth" / "rock_mask.npy").astype(bool)
     pore = np.load(output_dir / "ground_truth" / "pore_mask.npy").astype(bool)
@@ -225,12 +234,23 @@ def evaluate_porous(output_dir: Path, model_dir: Path) -> dict:
     model, device, cfg, geometry = _load_model(model_dir)
     raw = _evaluate_raw_volume(model, device, tuple(gt.shape), "voxel_centers")
     projection_min, projection_max, projection_range = _projection_scaling(output_dir)
-    reconstruction = raw * (projection_range / float(geometry.max_distance_traveled))
+    reconstruction_model = raw * (projection_range / float(geometry.max_distance_traveled))
+    reconstruction = (
+        nect_model_volume_to_tigre_world(reconstruction_model)
+        if correct_coordinate_frame
+        else reconstruction_model
+    )
 
-    evaluation_dir = output_dir / "evaluation"
+    evaluation_dir = output_dir / (
+        "evaluation_coordinate_corrected" if correct_coordinate_frame else "evaluation"
+    )
     (evaluation_dir / "figures").mkdir(parents=True, exist_ok=True)
     (evaluation_dir / "volumes").mkdir(parents=True, exist_ok=True)
     np.save(evaluation_dir / "volumes" / "raw_network_output.npy", raw)
+    np.save(
+        evaluation_dir / "volumes" / "reconstruction_model_coordinates_mm_inv.npy",
+        reconstruction_model.astype(np.float32),
+    )
     np.save(evaluation_dir / "volumes" / "reconstruction_voxel_centers_mm_inv.npy", reconstruction.astype(np.float32))
 
     regions = _make_region_masks(rock, pore)
@@ -238,9 +258,25 @@ def evaluate_porous(output_dir: Path, model_dir: Path) -> dict:
         np.save(evaluation_dir / "volumes" / f"mask_{name}.npy", mask)
     region_metrics = {name: _region_metrics(reconstruction, gt, mask) for name, mask in regions.items() if np.any(mask)}
     global_mask = np.ones(gt.shape, dtype=bool)
+    model_correlation = float(
+        np.corrcoef(reconstruction_model.astype(np.float64).ravel(), gt.astype(np.float64).ravel())[0, 1]
+    )
+    reported_correlation = float(
+        np.corrcoef(reconstruction.astype(np.float64).ravel(), gt.astype(np.float64).ravel())[0, 1]
+    )
     metrics = {
         "model_directory": str(model_dir),
-        "coordinate_convention": "voxel centers: (i + 0.5) / N, array order zyx",
+        "coordinate_convention": {
+            "array_order": "zyx",
+            "sampling": "voxel centers: (i + 0.5) / N",
+            "reported_frame": "TIGRE physical world" if correct_coordinate_frame else "NeCT model",
+            "model_to_world_mapping": TIGRE_WORLD_TO_NECT_MODEL if correct_coordinate_frame else "none",
+            "reason": (
+                "TIGRE and NeCT angle zero differ by pi about z; both detector-u and source signs map under Rz(pi)."
+                if correct_coordinate_frame
+                else "legacy direct checkpoint evaluation retained for comparison"
+            ),
+        },
         "attenuation_scaling": {
             "projection_min": projection_min,
             "projection_max": projection_max,
@@ -269,6 +305,12 @@ def evaluate_porous(output_dir: Path, model_dir: Path) -> dict:
             "interior": "phase voxels outside the two-voxel boundary mask",
         },
         "global": _region_metrics(reconstruction, gt, global_mask),
+        "voxelwise_pearson_correlation": reported_correlation,
+        "orientation_check": {
+            "legacy_model_frame_correlation": model_correlation,
+            "reported_world_frame_correlation": reported_correlation,
+            "mapping_was_fixed_from_ray_geometry_before_metric_comparison": True,
+        },
         "rock": _region_metrics(reconstruction, gt, rock),
         "pore": {
             **_region_metrics(reconstruction, gt, pore),
