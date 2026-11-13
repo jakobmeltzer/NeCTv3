@@ -166,7 +166,13 @@ def _plot_distributions(
         region_masks["pore_interior_beyond_2_voxels"],
     ]
     values = [np.abs(reconstruction[mask] - gt[mask]) for mask in masks]
-    axes[2].boxplot(values, labels=names, showfliers=False)
+    # Matplotlib 3.9 renamed ``labels`` to ``tick_labels`` and newer releases
+    # no longer accept the old keyword.  Keep compatibility with the older
+    # version used on some development machines.
+    try:
+        axes[2].boxplot(values, tick_labels=names, showfliers=False)
+    except TypeError:
+        axes[2].boxplot(values, labels=names, showfliers=False)
     axes[2].tick_params(axis="x", rotation=20)
     axes[2].set(ylabel="Absolute error (mm$^{-1}$)", title="Boundary versus interior error")
     axes[2].grid(axis="y", alpha=0.2)
